@@ -186,7 +186,11 @@
     <h1>🐟 DASHBOARD ACTIVATION ROCKSTAR FISHING HUB</h1>
     <div class="period" id="periodLabel"></div>
   </div>
-  <div style="font-size:12px;opacity:.85;">Nguồn: CENTRAL_Report_Cảng Cá Rockstar_UTD 1907.xlsx · Sheet Raw data (BC Chi tiết)</div>
+  <div style="font-size:12px;opacity:.85;text-align:right;">
+    <div>Nguồn dữ liệu: Google Sheets (Rawdata) · tự động đồng bộ</div>
+    <div id="syncStatus" style="margin-top:4px;">Đang tải dữ liệu mới nhất…</div>
+    <button id="syncRefreshBtn" type="button" style="margin-top:4px;background:#fff;color:#0b2545;border:none;border-radius:4px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;">🔄 Làm mới dữ liệu</button>
+  </div>
 </header>
 
 <nav class="tabs">
@@ -575,11 +579,11 @@ function updateKpiDom(rows){
 
 // ============ SLICER-DRIVEN CHARTS (computed live from raw data) ============
 const REGION_ORDER = ['Quảng Ngãi','Quảng Bình','Huế','Đà Nẵng'];
-const rawAll = DATA.raw;
-const allRegions = REGION_ORDER.filter(r=>rawAll.some(x=>x.tinh_tp===r));
-const allChannels = [...new Set(rawAll.map(r=>r.kenh_thuc_hien).filter(Boolean))];
-const allWeeks = [...new Set(rawAll.map(r=>r.tuan_thuc_hien).filter(Boolean))];
-const allDates = [...new Set(rawAll.map(r=>r.ngay_thuc_hien).filter(Boolean))].sort();
+let rawAll = DATA.raw;
+let allRegions = REGION_ORDER.filter(r=>rawAll.some(x=>x.tinh_tp===r));
+let allChannels = [...new Set(rawAll.map(r=>r.kenh_thuc_hien).filter(Boolean))];
+let allWeeks = [...new Set(rawAll.map(r=>r.tuan_thuc_hien).filter(Boolean))];
+let allDates = [...new Set(rawAll.map(r=>r.ngay_thuc_hien).filter(Boolean))].sort();
 
 const sel = {region: new Set(), channel: new Set(), date: new Set()};
 
@@ -754,12 +758,24 @@ function renderDashboardCharts(){
 renderDashboardCharts();
 
 // ---------- TOP TH ----------
-const topTHRaw = DATA.top_th.filter(r=>r[1]!==null); // [prov, ten, ca, ban]
-const provinces = [...new Set(topTHRaw.map(r=>r[0]))];
+function computeTopTH(rows){
+  const agg = {};
+  rows.forEach(r=>{
+    if(r.kenh_thuc_hien !== 'Tạp Hóa' || !r.ten_diem) return;
+    const key = r.tinh_tp+'|||'+r.ten_diem;
+    agg[key] = agg[key] || {prov:r.tinh_tp, ten:r.ten_diem, ca:0, ban:0};
+    agg[key].ca += r.tong_ca_thuc_hien||0;
+    agg[key].ban += r.tong_so_ban||0;
+  });
+  return Object.values(agg).map(r=>({...r, avg: r.ca? r.ban/r.ca : 0}));
+}
 const thProvSel = document.getElementById('thProvinceFilter');
-provinces.forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; thProvSel.appendChild(o); });
-
-let topTHData = topTHRaw.map(r=>({prov:r[0], ten:r[1], ca:r[2], ban:r[3], avg: r[2]? r[3]/r[2] : 0}));
+function refreshThProvinceOptions(){
+  thProvSel.innerHTML = '<option value="">Tất cả tỉnh/TP</option>';
+  [...new Set(topTHData.map(r=>r.prov))].forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; thProvSel.appendChild(o); });
+}
+let topTHData = computeTopTH(rawAll);
+refreshThProvinceOptions();
 let thSortKey='ban', thSortDir=-1;
 let topTHChart;
 
@@ -808,51 +824,77 @@ document.querySelectorAll('#tableTopTH th').forEach(th=>{
 renderTopTH();
 
 // ---------- TOP CANG ----------
-const topCangRows = DATA.top_cang.filter(r=>r[0]!=='Grand Total');
-const tcTbody = document.querySelector('#tableTopCang tbody');
-tcTbody.innerHTML = topCangRows.map(r=>{
-  const avg = r[1] ? (r[2]/r[1]) : 0;
-  return `<tr>
-    <td><span class="badge-region" style="background:${regionColor(r[0])}">${r[0]}</span></td>
-    <td>${fmt(r[1])}</td>
-    <td>${fmt(r[2],1)}</td>
-    <td>${fmt(r[3])}</td>
-    <td>${fmt(avg,1)}</td>
-  </tr>`;
-}).join('');
-const grand = DATA.top_cang.find(r=>r[0]==='Grand Total');
-if(grand){
-  tcTbody.innerHTML += `<tr style="font-weight:700;background:#eef4ff;">
-    <td>Grand Total</td><td>${fmt(grand[1])}</td><td>${fmt(grand[2],1)}</td><td>${fmt(grand[3])}</td><td>${fmt(grand[1]?grand[2]/grand[1]:0,1)}</td>
-  </tr>`;
+function computeTopCang(rows){
+  const agg = {};
+  rows.forEach(r=>{
+    if(r.kenh_thuc_hien !== 'Cảng Cá' || !r.tinh_tp) return;
+    agg[r.tinh_tp] = agg[r.tinh_tp] || {prov:r.tinh_tp, ca:0, ban:0, hit:0};
+    agg[r.tinh_tp].ca += r.tong_ca_thuc_hien||0;
+    agg[r.tinh_tp].ban += r.tong_so_ban||0;
+    agg[r.tinh_tp].hit += r.mau_actual||0;
+  });
+  const rowsOut = REGION_ORDER.filter(p=>agg[p]).map(p=>[agg[p].prov, agg[p].ca, agg[p].ban, agg[p].hit]);
+  const grand = rowsOut.reduce((a,r)=>[null, a[1]+r[1], a[2]+r[2], a[3]+r[3]], [null,0,0,0]);
+  return {rows: rowsOut, grand};
 }
-new Chart(document.getElementById('chartTopCang'), {
-  type:'bar',
-  data:{
+
+let topCangChart;
+function renderTopCang(){
+  const {rows: topCangRows, grand} = computeTopCang(rawAll);
+  const tcTbody = document.querySelector('#tableTopCang tbody');
+  tcTbody.innerHTML = topCangRows.map(r=>{
+    const avg = r[1] ? (r[2]/r[1]) : 0;
+    return `<tr>
+      <td><span class="badge-region" style="background:${regionColor(r[0])}">${r[0]}</span></td>
+      <td>${fmt(r[1])}</td>
+      <td>${fmt(r[2],1)}</td>
+      <td>${fmt(r[3])}</td>
+      <td>${fmt(avg,1)}</td>
+    </tr>`;
+  }).join('');
+  if(grand){
+    tcTbody.innerHTML += `<tr style="font-weight:700;background:#eef4ff;">
+      <td>Grand Total</td><td>${fmt(grand[1])}</td><td>${fmt(grand[2],1)}</td><td>${fmt(grand[3])}</td><td>${fmt(grand[1]?grand[2]/grand[1]:0,1)}</td>
+    </tr>`;
+  }
+  const chartData = {
     labels: topCangRows.map(r=>r[0]),
     datasets:[
       {label:'Tổng ca thực hiện', data: topCangRows.map(r=>r[1]), backgroundColor:'#0b2545', yAxisID:'y'},
       {label:'Tổng số bán (thùng)', data: topCangRows.map(r=>r[2]), backgroundColor:'#ff6b35', yAxisID:'y'},
       {label:'Actual (hit)', data: topCangRows.map(r=>r[3]), backgroundColor:'#0aa3a3', yAxisID:'y1'},
     ]
-  },
-  options:{
-    responsive:true, maintainAspectRatio:false,
-    scales:{
-      y:{position:'left', title:{display:true,text:'Ca / Thùng'}},
-      y1:{position:'right', title:{display:true,text:'Hit'}, grid:{drawOnChartArea:false}}
-    }
+  };
+  if(topCangChart){
+    topCangChart.data = chartData;
+    topCangChart.update();
+  } else {
+    topCangChart = new Chart(document.getElementById('chartTopCang'), {
+      type:'bar',
+      data: chartData,
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        scales:{
+          y:{position:'left', title:{display:true,text:'Ca / Thùng'}},
+          y1:{position:'right', title:{display:true,text:'Hit'}, grid:{drawOnChartArea:false}}
+        }
+      }
+    });
   }
-});
+}
+renderTopCang();
 
 // ---------- RAW DATA ----------
-const raw = DATA.raw;
-const rawRegions = [...new Set(raw.map(r=>r.tinh_tp).filter(Boolean))];
-const rawChannels = [...new Set(raw.map(r=>r.kenh_thuc_hien).filter(Boolean))];
+let raw = rawAll;
 const rawRegionSel = document.getElementById('rawRegionFilter');
 const rawChannelSel = document.getElementById('rawChannelFilter');
-rawRegions.forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; rawRegionSel.appendChild(o); });
-rawChannels.forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; rawChannelSel.appendChild(o); });
+function refreshRawFilterOptions(){
+  rawRegionSel.innerHTML = '<option value="">Tất cả tỉnh/TP</option>';
+  rawChannelSel.innerHTML = '<option value="">Tất cả kênh</option>';
+  [...new Set(raw.map(r=>r.tinh_tp).filter(Boolean))].forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; rawRegionSel.appendChild(o); });
+  [...new Set(raw.map(r=>r.kenh_thuc_hien).filter(Boolean))].forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; rawChannelSel.appendChild(o); });
+}
+refreshRawFilterOptions();
 
 let rawSortKey='stt', rawSortDir=1;
 function renderRaw(){
@@ -896,6 +938,112 @@ document.querySelectorAll('#tableRaw th').forEach(th=>{
   });
 });
 renderRaw();
+
+// ============ LIVE SYNC WITH GOOGLE SHEETS ============
+// The raw data now lives in a Google Sheet ("Rawdata" tab). Anyone can add new rows there
+// and this dashboard will pick them up automatically the next time someone opens the link
+// (or clicks "Làm mới dữ liệu"). If the sheet can't be reached (offline, link revoked, etc.)
+// the dashboard quietly keeps showing the snapshot embedded in this file so it never breaks.
+const SHEET_ID = '1gTlR1QA17SCxSn0fdREgpziHFIw8c9qpY3LTRg_C4bU';
+const SHEET_NAME = 'Rawdata';
+const SHEET_RANGE = 'B7:AM100000';
+const RAW_FIELDS = ['stt','khu_vuc','tinh_tp','ngay_thuc_hien','tuan_thuc_hien','bat_dau','ket_thuc',
+  'cach_thuc','kenh_thuc_hien','ten_diem','dia_chi','tong_ca_o_cang','tong_ca_thuc_hien','mau_target',
+  'mau_actual','mau_ratio','tong_khach_tiep_can','nguoi_mua_hang','kh_moi_biet','kh_mua_lan_dau',
+  'tong_so_ban','qua_02binh1l','qua_binh_giunhiet','qua_01thung_rs','qua_02thung16l','qua_01tui_dl',
+  'gia_ban','doanh_so','doi_thu','sup_ca','pg_ca','nhan_su_thuc_hien','ks_thung','ks_khoen','ks_bbqc',
+  'ks_thieu_khoen','thong_tin_mua_hang','note'];
+
+function parseGvizDate(v){
+  if(typeof v !== 'string') return null;
+  const m = /^Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+))?\)$/.exec(v);
+  if(!m) return null;
+  const parts = m.slice(1).map(x=>x===undefined?0:Number(x));
+  const [y,mo,d,h,mi,s] = parts;
+  return new Date(y, mo, d, h, mi, s);
+}
+
+async function fetchRawFromSheet(){
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}&range=${SHEET_RANGE}`;
+  const res = await fetch(url, {cache:'no-store'});
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  const text = await res.text();
+  const jsonStart = text.indexOf('(');
+  const jsonEnd = text.lastIndexOf(')');
+  const obj = JSON.parse(text.substring(jsonStart+1, jsonEnd));
+  const gvizRows = (obj.table && obj.table.rows) || [];
+  const out = [];
+  for(const row of gvizRows){
+    const c = row.c || [];
+    const get = (i) => (c[i] && c[i].v !== undefined) ? c[i].v : null;
+    const stt = get(0);
+    if(stt===null || stt==='' || isNaN(Number(stt))) continue;
+    const rec = {};
+    RAW_FIELDS.forEach((f,i)=>{
+      let v = get(i);
+      if(f==='ngay_thuc_hien'){
+        const d = parseGvizDate(v);
+        v = d ? d.toISOString() : v;
+      } else if(f==='bat_dau' || f==='ket_thuc'){
+        if(Array.isArray(v)){
+          v = String(v[0]).padStart(2,'0')+':'+String(v[1]).padStart(2,'0');
+        } else {
+          const d = parseGvizDate(v);
+          if(d) v = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+        }
+      }
+      rec[f] = v;
+    });
+    out.push(rec);
+  }
+  return out;
+}
+
+function setSyncStatus(html){
+  const el = document.getElementById('syncStatus');
+  if(el) el.innerHTML = html;
+}
+
+async function refreshFromSheet(isManual){
+  setSyncStatus(isManual ? 'Đang làm mới…' : 'Đang tải dữ liệu mới nhất…');
+  try{
+    const fresh = await fetchRawFromSheet();
+    if(!fresh.length) throw new Error('empty');
+
+    rawAll = fresh;
+    allRegions = REGION_ORDER.filter(r=>rawAll.some(x=>x.tinh_tp===r));
+    allChannels = [...new Set(rawAll.map(r=>r.kenh_thuc_hien).filter(Boolean))];
+    allWeeks = [...new Set(rawAll.map(r=>r.tuan_thuc_hien).filter(Boolean))];
+    allDates = [...new Set(rawAll.map(r=>r.ngay_thuc_hien).filter(Boolean))].sort();
+
+    sel.region.clear(); sel.channel.clear(); sel.date.clear();
+    buildSlicer('slicerRegion', allRegions, sel.region);
+    buildSlicer('slicerChannel', allChannels, sel.channel);
+    buildSlicer('slicerDate', allDates, sel.date, d=>fmtDate(d));
+    renderDashboardCharts();
+
+    topTHData = computeTopTH(rawAll);
+    refreshThProvinceOptions();
+    renderTopTH();
+
+    renderTopCang();
+
+    raw = rawAll;
+    refreshRawFilterOptions();
+    renderRaw();
+
+    const now = new Date();
+    const stamp = now.toLocaleString('vi-VN', {hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'});
+    setSyncStatus(`✅ Đã cập nhật lúc ${stamp} · ${rawAll.length} bản ghi`);
+  } catch(err){
+    console.warn('Không tải được dữ liệu từ Google Sheets, giữ dữ liệu snapshot.', err);
+    setSyncStatus('⚠️ Không thể tải dữ liệu mới (đang hiển thị bản snapshot gần nhất)');
+  }
+}
+
+document.getElementById('syncRefreshBtn').addEventListener('click', ()=>refreshFromSheet(true));
+refreshFromSheet(false);
+setInterval(()=>refreshFromSheet(false), 5*60*1000);
 </script>
 </body>
 </html>
