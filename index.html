@@ -521,7 +521,7 @@ document.getElementById('noteBox').textContent = '📌 ' + (kpi.note || '');
 
 // ---------- Recompute KPI banner + Buyer/Repurchase/NewUser + TH/Cảng stats from filtered raw rows ----------
 function computeKpiFromRows(rows){
-  const sum = (key) => rows.reduce((a,r)=>a+(r[key]||0),0);
+  const sum = (key) => rows.reduce((a,r)=>{const v=Number(r[key]);return a+(isNaN(v)?0:v);},0);
   const newUser = sum('kh_moi_biet');
   const repurchase = sum('kh_mua_lan_dau');
   const thRows = rows.filter(r=>r.kenh_thuc_hien==='Tạp Hóa');
@@ -1031,6 +1031,21 @@ async function refreshFromSheet(isManual){
     raw = rawAll;
     refreshRawFilterOptions();
     renderRaw();
+
+    // Point counts + period label are derived live from the data so they never go stale.
+    kpi.th_points = topTHData.length + ' điểm';
+    const cangPointSet = new Set(rawAll.filter(r=>r.kenh_thuc_hien==='Cảng Cá').map(r=>r.ten_diem).filter(Boolean));
+    kpi.cang_points = cangPointSet.size + ' điểm';
+    document.getElementById('thPoints').textContent = kpi.th_points;
+    document.getElementById('cangPoints').textContent = kpi.cang_points;
+    if(allDates.length){
+      const first = new Date(allDates[0]), last = new Date(allDates[allDates.length-1]);
+      const pad = n => String(n).padStart(2,'0');
+      const fmtD = d => pad(d.getDate())+'/'+pad(d.getMonth()+1);
+      const periodText = 'Thời gian ghi nhận ('+fmtD(first)+' - '+fmtD(last)+')';
+      const pl = document.getElementById('periodLabel'); if(pl) pl.textContent = periodText;
+      const pi = document.getElementById('periodInline'); if(pi) pi.textContent = periodText.replace('Thời gian ghi nhận ','');
+    }
 
     const now = new Date();
     const stamp = now.toLocaleString('vi-VN', {hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'});
